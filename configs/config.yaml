@@ -1,0 +1,16 @@
+model:
+  num_nodes: 207
+  in_channels: 2
+  hidden_channels: 64
+  out_channels: 1
+  kernel_size: 3
+  K: 3                  # Chebyshev polynomial order for graph conv
+
+training:
+  learning_rate: 0.001
+  batch_size: 32
+  epochs: 100
+
+data:
+  input_window: 12      # number of historical time steps
+  output_window: 3      # number of future time steps to predict
