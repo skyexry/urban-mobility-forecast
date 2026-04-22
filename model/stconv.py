@@ -128,6 +128,26 @@ class STConvBlock(nn.Module):
         return out
 
 
+class STGCNBlock(nn.Module):
+    def __init__(self, in_channels, hidden_channels, out_channels, kernel_size, K):
+        """
+        Full STGCN: two ST-Conv blocks + output block.
+        Ref: ST-BDP paper Figure 11(a).
+        """
+        super().__init__()
+        # Two stacked ST-Conv blocks
+        self.stconv1 = STConvBlock(in_channels, hidden_channels, out_channels, kernel_size, K)
+        self.stconv2 = STConvBlock(out_channels, hidden_channels, out_channels, kernel_size, K)
+        # Output block: Conv1D to final output
+        self.output_conv = nn.Conv2d(out_channels, out_channels, kernel_size=(1, 1))
+
+    def forward(self, x, L_hat):
+        out = self.stconv1(x, L_hat)
+        out = self.stconv2(out, L_hat)
+        out = self.output_conv(out)
+        return out
+    
+
 def build_laplacian(W: torch.Tensor) -> torch.Tensor:
     """
     Compute normalized graph Laplacian from adjacency matrix.

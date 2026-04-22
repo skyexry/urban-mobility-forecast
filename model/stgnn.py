@@ -2,7 +2,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from model.stconv import STConvBlock, build_laplacian
+from model.stconv import STConvBlock, STGCNBlock, build_laplacian
 from model.tcn import TCNBlock
 
 
@@ -10,7 +10,6 @@ class SelfAttentionDecoder(nn.Module):
     def __init__(self, d_model: int, num_heads: int = 4, dropout: float = 0.1):
         """
         Self-Attention based decoder.
-        Implements Eq.(17)(18) from ST-BDP paper.
 
         Args:
             d_model:   feature dimension
@@ -62,7 +61,6 @@ class STGNN(nn.Module):
     ):
         """
         Spatio-Temporal GNN for bike-sharing demand forecasting.
-        Implements ST-BDP architecture (Zhou et al., 2024):
         STConv Encoder + TCN Encoder + Feature Fusion + Self-Attention Decoder.
 
         Args:
@@ -86,7 +84,7 @@ class STGNN(nn.Module):
         self.output_window = output_window
 
         # STConv block: demand graph encoder
-        self.stconv = STConvBlock(
+        self.stconv = STGCNBlock(
             in_channels=in_channels,
             hidden_channels=hidden_channels,
             out_channels=out_channels,
@@ -106,7 +104,7 @@ class STGNN(nn.Module):
         self.dropout = nn.Dropout(dropout)
 
         # Reduced time after STConv: T - 2*(Kt-1)
-        reduced_time = input_window - 2 * (kernel_size - 1)  # 72-4=68
+        reduced_time = input_window - 4 * (kernel_size - 1)  # 72-8=64
 
         # Feature fusion: project to common d_model
         # STConv output: (batch, out_channels, N, reduced_T)
