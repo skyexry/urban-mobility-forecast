@@ -52,13 +52,13 @@ def build_demand_matrix(
 
     return pivot.values.astype(np.float32), pivot.index  # (T, N)
 
-
 def normalize_demand(
     demand_matrix: np.ndarray
 ) -> tuple[np.ndarray, MinMaxScaler]:
     """
-    Normalize demand values to [-1, 1] (compatible with tanh activation).
-    Scaler is returned for inverse transform during evaluation.
+    Normalize demand values using log1p transform + MinMax scaling to [-1, 1].
+    log1p compresses the skewed distribution before scaling,
+    improving prediction accuracy for low-demand time steps.
 
     Args:
         demand_matrix: array of shape (T, N)
@@ -68,10 +68,13 @@ def normalize_demand(
         scaler:        fitted MinMaxScaler for inverse transform
     """
     T, N = demand_matrix.shape
-    scaler = MinMaxScaler(feature_range=(-1, 1))
 
-    # Fit on flattened values, reshape back
-    normalized = scaler.fit_transform(demand_matrix.reshape(-1, 1)).reshape(T, N)
+    # log1p transform to compress skewed distribution
+    # log1p(0) = 0, preserves zero demand
+    log_demand = np.log1p(demand_matrix)
+
+    scaler = MinMaxScaler(feature_range=(-1, 1))
+    normalized = scaler.fit_transform(log_demand.reshape(-1, 1)).reshape(T, N)
 
     return normalized, scaler
 
@@ -126,3 +129,24 @@ def build_sliding_windows(
     print(f"y        : {y.shape}")
 
     return x_demand, x_time, y
+
+def inverse_transform_demand(
+    normalized: np.ndarray,
+    scaler: MinMaxScaler
+) -> np.ndarray:
+    """
+    Inverse transform normalized predictions back to original demand scale.
+    Reverses log1p + MinMax normalization.
+
+    Args:
+        normalized: array of any shape
+        scaler:     fitted MinMaxScaler from normalize_demand
+
+    Returns:
+        demand: array in original scale
+    """
+    shape = normalized.shape
+    # Reverse MinMax scaling
+    log_demand = scaler.inverse_transform(normalized.reshape(-1, 1)).reshape(shape)
+    # Reverse log1p
+    return np.expm1(log_demand)
