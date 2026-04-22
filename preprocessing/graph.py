@@ -6,7 +6,7 @@ from scipy.spatial.distance import cdist
 
 def build_adjacency_matrix(
     df: pd.DataFrame,
-    sigma2: float = 0.1,
+    sigma2: float = 0.001,
     theta: float = 0.5
 ) -> tuple[np.ndarray, pd.DataFrame]:
     """

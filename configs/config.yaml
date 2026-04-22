@@ -14,3 +14,7 @@ training:
 data:
   input_window: 12      # number of historical time steps
   output_window: 3      # number of future time steps to predict
+
+graph:
+  sigma2: 0.001
+  theta: 0.5
