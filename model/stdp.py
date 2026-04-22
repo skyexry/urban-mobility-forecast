@@ -1,1 +1,0 @@
-# stdp.py — placeholder
