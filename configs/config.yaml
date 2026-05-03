@@ -1,5 +1,5 @@
 model:
-  num_nodes: 207
+  num_nodes: 100
   in_channels: 2
   hidden_channels: 64
   out_channels: 1
@@ -12,9 +12,9 @@ training:
   epochs: 100
 
 data:
-  input_window: 12      # number of historical time steps
-  output_window: 3      # number of future time steps to predict
+  input_window: 72      # number of historical time steps (72h = 3 days)
+  output_window: 72     # number of future time steps to predict
 
 graph:
-  sigma2: 0.001
-  theta: 0.5
+  sigma2: 0.0005
+  theta: 0.90
