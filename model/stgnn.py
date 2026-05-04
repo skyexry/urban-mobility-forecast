@@ -61,7 +61,8 @@ class STGNN(nn.Module):
         input_window: int = 72,
         output_window: int = 72,
         num_heads: int = 4,
-        dropout: float = 0.2
+        dropout: float = 0.2,
+        weather_channels: int = 0
     ):
         """
         Spatio-Temporal GNN for bike-sharing demand forecasting.
@@ -82,12 +83,14 @@ class STGNN(nn.Module):
             output_window:   output time steps (paper: 72)
             num_heads:       Self-Attention heads
             dropout:         dropout rate
+            weather_channels: weather feature dim (0 = no weather, 9 = full weather branch)
         """
         super().__init__()
 
         self.num_nodes = num_nodes
         self.input_window = input_window
         self.output_window = output_window
+        self.weather_channels = weather_channels
 
         # STGCNBlock: two stacked ST-Conv blocks for demand graph encoding
         self.stconv = STGCNBlock(
@@ -107,13 +110,25 @@ class STGNN(nn.Module):
             dropout=dropout
         )
 
+        # Optional weather TCN branch (matches paper's 4th input branch)
+        if weather_channels > 0:
+            self.weather_tcn = TCNBlock(
+                in_channels=weather_channels,
+                out_channels=tcn_channels,
+                kernel_size=kernel_size,
+                num_layers=4,
+                dropout=dropout
+            )
+
         self.dropout = nn.Dropout(dropout)
 
         # Time dim after two STConv blocks: T - 4*(Kt-1)
         reduced_time = input_window - 4 * (kernel_size - 1)  # 72-8=64
 
-        # Feature fusion
-        d_model = out_channels + tcn_channels                 # 64+64=128
+        # d_model: 128 without weather, 192 with weather branch
+        n_branches = 3 if weather_channels > 0 else 2
+        d_model = out_channels + tcn_channels * (n_branches - 1)
+
         self.fusion_conv = nn.Conv1d(d_model, d_model, kernel_size=1)
         self.fusion_norm = nn.LayerNorm(d_model)
 
@@ -131,7 +146,8 @@ class STGNN(nn.Module):
         x_demand: torch.Tensor,
         x_time: torch.Tensor,
         edge_index: torch.Tensor,
-        edge_weight: torch.Tensor
+        edge_weight: torch.Tensor,
+        x_weather: torch.Tensor = None
     ) -> torch.Tensor:
         """
         Args:
@@ -139,6 +155,7 @@ class STGNN(nn.Module):
             x_time:      (batch, input_window, 6)
             edge_index:  (2, E) graph connectivity
             edge_weight: (E,) edge weights
+            x_weather:   (batch, input_window, 9) — optional weather features
 
         Returns:
             y_hat: (batch, N, output_window)
@@ -161,8 +178,18 @@ class STGNN(nn.Module):
         tcn_out = tcn_out.unsqueeze(1).expand(-1, N, -1, -1) # (batch, N, tcn_ch, reduced_T)
         tcn_out = tcn_out.permute(0, 1, 3, 2)               # (batch, N, reduced_T, tcn_ch)
 
+        # ── Encoder: Weather TCN branch (optional) ──────────────────────────
+        branches = [stconv_out, tcn_out]
+        if self.weather_channels > 0 and x_weather is not None:
+            x_w = x_weather.permute(0, 2, 1)                        # (batch, 9, T)
+            weather_out = self.weather_tcn(x_w)                      # (batch, tcn_ch, T)
+            weather_out = weather_out[:, :, :reduced_T]              # (batch, tcn_ch, reduced_T)
+            weather_out = weather_out.unsqueeze(1).expand(-1, N, -1, -1)
+            weather_out = weather_out.permute(0, 1, 3, 2)           # (batch, N, reduced_T, tcn_ch)
+            branches.append(weather_out)
+
         # ── Feature Fusion ──────────────────────────────────────────────────
-        fused = torch.cat([stconv_out, tcn_out], dim=-1)     # (batch, N, reduced_T, d_model)
+        fused = torch.cat(branches, dim=-1)                  # (batch, N, reduced_T, d_model)
 
         b, n, t, d = fused.shape
         fused = fused.reshape(b * n, t, d)
