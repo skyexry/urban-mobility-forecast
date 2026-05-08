@@ -47,6 +47,31 @@ class SelfAttentionDecoder(nn.Module):
         return x
 
 
+class TransformerDecoderHead(nn.Module):
+    def __init__(self, d_model: int, output_window: int, num_heads: int = 4,
+                 dropout: float = 0.1, num_layers: int = 2):
+        """
+        Transformer decoder: learned queries (one per output step) attend to
+        encoder memory via cross-attention, replacing the Conv1d mean-pool output.
+        """
+        super().__init__()
+        self.query_embed = nn.Embedding(output_window, d_model)
+        decoder_layer = nn.TransformerDecoderLayer(
+            d_model=d_model, nhead=num_heads,
+            dim_feedforward=d_model * 2, dropout=dropout,
+            batch_first=True
+        )
+        self.decoder = nn.TransformerDecoder(decoder_layer, num_layers=num_layers)
+        self.out_proj = nn.Linear(d_model, 1)
+
+    def forward(self, memory: torch.Tensor) -> torch.Tensor:
+        # memory: (b*n, reduced_T, d_model)
+        b_n = memory.shape[0]
+        queries = self.query_embed.weight.unsqueeze(0).expand(b_n, -1, -1)
+        decoded = self.decoder(queries, memory)          # (b*n, output_window, d_model)
+        return self.out_proj(decoded).squeeze(-1)        # (b*n, output_window)
+
+
 class STGNN(nn.Module):
     def __init__(
         self,
@@ -62,7 +87,8 @@ class STGNN(nn.Module):
         output_window: int = 72,
         num_heads: int = 4,
         dropout: float = 0.2,
-        weather_channels: int = 0
+        weather_channels: int = 0,
+        use_transformer_decoder: bool = False
     ):
         """
         Spatio-Temporal GNN for bike-sharing demand forecasting.
@@ -91,6 +117,7 @@ class STGNN(nn.Module):
         self.input_window = input_window
         self.output_window = output_window
         self.weather_channels = weather_channels
+        self.use_transformer_decoder = use_transformer_decoder
 
         # STGCNBlock: two stacked ST-Conv blocks for demand graph encoding
         self.stconv = STGCNBlock(
@@ -138,8 +165,12 @@ class STGNN(nn.Module):
         # Self-Attention decoder
         self.decoder = SelfAttentionDecoder(d_model, num_heads, dropout)
 
-        # Output projection: d_model → output_window
-        self.output_proj = nn.Conv1d(d_model, output_window, kernel_size=1)
+        # Output head: Transformer decoder (cross-attention) or Conv1d mean-pool
+        if use_transformer_decoder:
+            self.output_head = TransformerDecoderHead(
+                d_model, output_window, num_heads, dropout, num_layers=2)
+        else:
+            self.output_proj = nn.Conv1d(d_model, output_window, kernel_size=1)
 
     def forward(
         self,
@@ -204,9 +235,12 @@ class STGNN(nn.Module):
         # ── Self-Attention Decoder ──────────────────────────────────────────
         decoded = self.decoder(fused)                         # (b*n, t, d_model)
 
-        # ── Output projection ───────────────────────────────────────────────
-        out = self.output_proj(decoded.transpose(1, 2))       # (b*n, output_window, t)
-        out = out.mean(dim=-1)                                # (b*n, output_window)
+        # ── Output head ─────────────────────────────────────────────────────
+        if self.use_transformer_decoder:
+            out = self.output_head(decoded)                   # (b*n, output_window)
+        else:
+            out = self.output_proj(decoded.transpose(1, 2))   # (b*n, output_window, t)
+            out = out.mean(dim=-1)                            # (b*n, output_window)
         out = out.reshape(batch, N, self.output_window)       # (batch, N, output_window)
 
         return out
