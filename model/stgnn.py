@@ -88,7 +88,8 @@ class STGNN(nn.Module):
         num_heads: int = 4,
         dropout: float = 0.2,
         weather_channels: int = 0,
-        use_transformer_decoder: bool = False
+        use_transformer_decoder: bool = False,
+        decoder_layers: int = 2
     ):
         """
         Spatio-Temporal GNN for bike-sharing demand forecasting.
@@ -168,7 +169,7 @@ class STGNN(nn.Module):
         # Output head: Transformer decoder (cross-attention) or Conv1d mean-pool
         if use_transformer_decoder:
             self.output_head = TransformerDecoderHead(
-                d_model, output_window, num_heads, dropout, num_layers=2)
+                d_model, output_window, num_heads, dropout, num_layers=decoder_layers)
         else:
             self.output_proj = nn.Conv1d(d_model, output_window, kernel_size=1)
 
