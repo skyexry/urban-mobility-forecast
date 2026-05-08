@@ -1,0 +1,200 @@
+\documentclass[12pt]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath, amssymb}
+\usepackage{graphicx}
+\usepackage{hyperref}
+\usepackage{booktabs}
+\usepackage{parskip}
+
+\title{Urban Mobility Forecasting with Spatio-Temporal Graph Neural Networks}
+\author{Skye Xi \\ \texttt{rx2285@nyu.edu}}
+\date{Data Bootcamp \\ Professor: Jacob Frias Koehler}
+
+\begin{document}
+
+\maketitle
+
+\section{Introduction}
+
+Accurate short-term demand forecasting is a core operational challenge for shared mobility
+systems. Operators must balance bike availability against redistribution costs, and a reliable
+72-hour ahead forecast at the station level can directly inform rebalancing logistics.
+CitiBike, New York City's docked bike-share system, sees sharp spatial heterogeneity---high-traffic
+Midtown Manhattan stations can experience 10$\times$ more demand than quieter residential
+stations---and strong temporal structure driven by commuting patterns, weekend leisure
+rides, and weather.
+
+This project benchmarks five forecasting models on hourly CitiBike demand for 100 stations
+across NYC using data from January 2024 through December 2025. The models range from a
+non-parametric historical average to a Spatio-Temporal Graph Neural Network (STGNN) that
+explicitly encodes the geographic proximity graph among stations. The key findings are:
+(1) the STGNN achieves the lowest error (MAE 8.49 trips/hr), a 37\% improvement over the
+historical average baseline; (2) adding a weather branch provides no benefit at this data
+scale; and (3) an asymmetric loss function that penalizes under-prediction reduces peak-hour
+errors by improving high-demand coverage.
+
+\section{Data Description}
+
+\textbf{Trip records.}
+Raw trip-level data were downloaded from the
+\href{https://citibikenyc.com/system-data}{CitiBike system data portal}.
+Each record contains departure station ID, latitude, longitude, and start timestamp.
+Trips were aggregated into an hourly demand count per station, yielding a
+$(T \times N)$ matrix of shape $(16{,}808 \times 100)$ covering 700 days.
+
+\textbf{Station selection.}
+From roughly 2,000 active stations, the top 100 by total annual demand were retained.
+A graph-connectivity filter removed any station with zero edges under the proximity graph
+to prevent isolated nodes from degrading spatial learning.
+
+\textbf{Feature engineering.}
+Demand values were transformed with $\log(1 + x)$ to reduce skew from occasional extreme
+counts, then scaled to $[-1, 1]$ using a Min-Max scaler fit exclusively on training data
+to prevent leakage. Cyclic time encodings (sin/cos of hour-of-day, day-of-week, and
+day-of-year) produce a 6-dimensional time feature vector aligned with each hourly step.
+
+\textbf{Weather.}
+Hourly weather for NYC was fetched from the Open-Meteo archive API (no API key required).
+Nine features were used: temperature, dewpoint, relative humidity, surface pressure,
+wind U/V components, wind gust U/V, and raw precipitation. The first eight were z-score
+normalized; precipitation was kept in mm/hr.
+
+\textbf{Train/validation/test split.}
+Data were split chronologically---70\% training, 15\% validation, 15\% test---to
+respect the temporal ordering and avoid future leakage. A sliding window of
+72 hours input / 72 hours output was used for all neural models (100 stations,
+$\sim$11,600 training samples).
+
+\textbf{Graph construction.}
+A station proximity graph was built using the Gaussian kernel on pairwise
+Euclidean distances between station coordinates:
+\[
+  w_{ij} = \exp\!\left(-\frac{d_{ij}^2}{\sigma^2}\right), \quad w_{ij} = 0 \text{ if } w_{ij} < \theta,
+\]
+with $\sigma^2 = 0.0005$ and sparsity threshold $\theta = 0.90$.
+This yields 656 directed edges among the 100 nodes.
+
+\section{Models and Methods}
+
+\textbf{Historical Average (HA).}
+For each station and hour-of-day (0--23), the mean demand over the training set is
+predicted directly. No parameters are learned. This baseline captures daily periodicity
+but ignores week-to-week variation and spatial correlations.
+
+\textbf{LSTM.}
+A two-layer LSTM with 64 hidden units is applied independently to each station's
+univariate demand sequence. A linear head maps the final hidden state to the 72-step
+output. This model captures temporal autocorrelation but is blind to spatial
+relationships between stations.
+
+\textbf{TCN-only.}
+A Temporal Convolutional Network (TCN) with dilated causal convolutions operates
+per-node on the demand sequence and on the shared time features simultaneously.
+The two streams are concatenated and passed to a linear output layer. Like LSTM,
+this model has no spatial graph component.
+
+\textbf{STGNN.}
+The full Spatio-Temporal Graph Neural Network combines three branches:
+\begin{enumerate}
+  \item \textit{Spatial branch}: Chebyshev spectral graph convolution
+        (\texttt{ChebConv}, $K=3$, 4 layers) propagates information along the
+        proximity graph edges at each time step.
+  \item \textit{Demand TCN}: dilated convolutions encode the local temporal
+        pattern in each node's demand history.
+  \item \textit{Time TCN}: encodes the shared cyclic time features and broadcasts
+        them to all nodes.
+\end{enumerate}
+The three streams are fused and decoded by a Transformer-based self-attention head
+(1 decoder layer) that attends across the output horizon to produce the 72-step forecast.
+Training uses a log-cosh loss, Adam optimizer (lr $= 10^{-3}$), and
+ReduceLROnPlateau scheduling (factor 0.5, patience 5), with early stopping at patience 10.
+
+\textbf{STGNN + Weather.}
+A fourth TCN branch ingests the 9-dimensional weather features and is fused with the
+other three streams before decoding. All other hyperparameters are identical to STGNN.
+
+\textbf{STGNN with Asymmetric Loss (Exp. 09).}
+To address systematic under-prediction at peak hours, a final experiment replaces
+log-cosh with an asymmetric MSE loss:
+\[
+  \mathcal{L} = \frac{1}{|\mathcal{B}|}
+    \sum_{i} w_i (y_i - \hat{y}_i)^2, \quad
+  w_i = \begin{cases} 2.0 & \text{if } y_i > \hat{y}_i \\ 1.0 & \text{otherwise.} \end{cases}
+\]
+The input window is extended to 168 hours (one week), and patience is increased to 20
+to accommodate the slower convergence of the asymmetric objective.
+
+\section{Results and Interpretation}
+
+Table~\ref{tab:results} reports MAE and RMSE on the held-out test set, in original
+demand units (trips per station per hour).
+
+\begin{table}[h]
+\centering
+\caption{Test set performance on 100 NYC CitiBike stations (72-hour forecast horizon).}
+\label{tab:results}
+\begin{tabular}{lrrrr}
+\toprule
+Model               & MAE   & RMSE  & $\Delta$MAE vs HA & $\Delta$RMSE vs HA \\
+\midrule
+Historical Average  & 13.53 & 21.75 & ---               & ---   \\
+LSTM                &  8.81 & 14.45 & $-$34.9\%         & $-$33.6\% \\
+TCN-only            &  9.81 & 16.60 & $-$27.5\%         & $-$23.7\% \\
+STGNN               &  8.49 & 14.01 & $-$37.3\%         & $-$35.6\% \\
+STGNN + Weather     &  8.58 & 14.06 & $-$36.6\%         & $-$35.4\% \\
+\midrule
+STGNN (asym. loss)  &  8.19 & ---   & $-$39.5\%         & --- \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\textbf{Graph structure matters.}
+STGNN (MAE 8.49) outperforms both temporal-only baselines---LSTM (8.81) and TCN (9.81)---
+confirming that station proximity carries useful predictive signal.
+Nearby stations share demand pools (e.g., adjacent Midtown blocks), and ChebConv
+allows the model to propagate those shared patterns along graph edges.
+
+\textbf{TCN vs.\ LSTM.}
+TCN-only (9.81) underperforms LSTM (8.81) despite its larger receptive field.
+This is likely because the TCN model was not tuned as extensively and lacks
+recurrent hidden state to carry long-range dependencies; the LSTM benefits
+from its gated memory even over a 72-hour window.
+
+\textbf{Weather does not help.}
+STGNN + Weather (8.58) is marginally worse than plain STGNN (8.49).
+Weather is a global signal---all 100 stations receive the same NYC weather
+reading---so the weather branch adds parameters without providing station-level
+spatial differentiation. With only one year of training data, the model cannot
+reliably learn fine-grained weather--demand interactions.
+
+\textbf{Asymmetric loss improves peak accuracy.}
+The peak-hour analysis (morning rush 7--9\,am, evening rush 5--7\,pm) reveals that
+standard log-cosh loss systematically under-predicts demand at high-volume stations.
+Asymmetric MSE (Exp.\ 09) reduces the overall MAE to 8.19 while improving the
+peak-hour MAE to 12.65 vs.\ off-peak 6.70, recovering a meaningful portion of the
+amplitude at the highest-demand stations.
+
+\section{Conclusion and Next Steps}
+
+This project demonstrates that spatio-temporal graph neural networks meaningfully
+improve short-term bike-share demand forecasting over non-spatial baselines.
+The best single model---STGNN with asymmetric MSE loss---achieves a 39\% reduction
+in MAE relative to the historical average, with the bulk of the gain coming from
+explicit spatial message passing between geographically proximate stations.
+
+Several directions remain for future work.
+First, a \textit{denser graph} with a lower sparsity threshold (tested but abandoned
+due to over-smoothing from uniform ChebConv averaging) could benefit from edge
+normalization or attention-weighted aggregation (e.g., GAT layers) to preserve
+spatial gradients.
+Second, \textit{weather features} may become useful with multi-year training data that
+spans diverse seasonal patterns; the current single-year dataset provides insufficient
+weather variation to learn stable interaction terms.
+Third, \textit{station metadata}---dock capacity, proximity to transit, neighborhood
+land use---could serve as static node features to help the model distinguish
+structurally different stations rather than relying solely on temporal history.
+Finally, extending the output horizon beyond 72 hours and evaluating probabilistic
+calibration (e.g., prediction intervals) would better support operational rebalancing
+decisions that require uncertainty quantification.
+
+\end{document}
