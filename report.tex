@@ -24,14 +24,17 @@ Midtown Manhattan stations can experience 10$\times$ more demand than quieter re
 stations---and strong temporal structure driven by commuting patterns, weekend leisure
 rides, and weather.
 
-This project benchmarks five forecasting models on hourly CitiBike demand for 100 stations
+This project benchmarks six forecasting models on hourly CitiBike demand for 100 stations
 across NYC using data from January 2024 through December 2025. The models range from a
 non-parametric historical average to a Spatio-Temporal Graph Neural Network (STGNN) that
 explicitly encodes the geographic proximity graph among stations. The key findings are:
-(1) the STGNN achieves the lowest error, a 40\% improvement over the
-historical average baseline; (2) adding a weather branch provides no benefit at this data
-scale; and (3) an asymmetric loss function that penalizes under-prediction reduces peak-hour
-errors by improving high-demand coverage.
+(1) all neural models reduce MAE by 35--39\% over the historical average, with LSTM
+achieving the lowest overall error ($-$39.2\%);
+(2) STGNN with asymmetric log-cosh loss achieves the lowest peak-hour error among all
+models, outperforming LSTM during morning and evening rush hours;
+(3) adding a weather branch provides no benefit at this data scale; and
+(4) an asymmetric loss function that penalizes under-prediction improves peak-hour
+coverage with no meaningful cost to off-peak accuracy.
 
 \section{Data Description}
 
