@@ -40,9 +40,10 @@ urban-mobility-forecast/
 │   ├── 01b_station_selection.ipynb # top-100 station selection + graph filter
 │   ├── 02_graph_tuning.ipynb       # proximity graph grid search (σ², θ)
 │   ├── 03_features_test.ipynb      # feature engineering validation
-│   └── 11_train_eval.ipynb         # final training + evaluation (all models)
-├── output/                         # saved training notebooks with outputs
-├── report.tex                      # full project report (LaTeX)
+│   └── 11_train_eval.ipynb         # final training + evaluation (all models, with outputs)
+├── output/                         # intermediate training notebooks (earlier runs)
+├── final_project_report.pdf        # full project report (PDF)
+├── report.tex                      # LaTeX source
 └── README.md
 ```
 
@@ -92,4 +93,4 @@ EDA (demand distributions, temporal patterns, station maps) is available at:
 
 ## Report
 
-Full write-up in [`report.tex`](report.tex).
+Full write-up in [`final_project_report.pdf`](final_project_report.pdf).
